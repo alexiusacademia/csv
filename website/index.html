@@ -1,0 +1,297 @@
+<!doctype html>
+<!--
+  csv's website: https://csv-package.syncster.dev
+  Author: Alexius Academia
+  Date: 2026-10-25
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="author" content="Alexius Academia">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>csv · CSV files for Tessel</title>
+  <meta name="description" content="csv is a Tessel library that reads and writes CSV files exactly as Python's csv module does: quoted fields, any separator, headers, and columns as numbers.">
+  <meta name="theme-color" content="#0f8a5f">
+  <link rel="canonical" href="https://csv-package.syncster.dev/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="csv">
+  <meta property="og:title" content="csv · CSV files for Tessel">
+  <meta property="og:description" content="Read and write CSV files in Tessel: quoted fields, any separator, columns by name and as numbers. Checked against Python's csv module on 7,892 cases.">
+  <meta property="og:url" content="https://csv-package.syncster.dev/">
+  <meta property="og:image" content="https://csv-package.syncster.dev/assets/share.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A CSV file with quoted fields beside the table the csv library reads from it">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0f8a5f"/><rect x="7" y="8" width="18" height="16" rx="2" fill="none" stroke="#fff" stroke-width="2.4"/><path d="M7 14 H25 M13 8 V24 M19 8 V24" stroke="#fff" stroke-width="2"/></svg>
+      csv <small>for Tessel</small>
+    </a>
+    <nav>
+      <a href="#examples">Examples</a>
+      <a href="#tested" class="optional">Tested</a>
+      <a href="#reference">Reference</a>
+      <a href="https://github.com/alexiusacademia/csv">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow">A Tessel library</p>
+      <h1>CSV files, read the way Python reads them.</h1>
+      <p class="lede">Quoted fields with commas, quotes and line breaks in them, any separator, a header to find columns by name, and columns read as numbers. A broken quote is an error that says where, not a silently wrong table.</p>
+      <div class="install">
+        <code>tessel add csv</code>
+        <button class="copy" type="button" data-copy="tessel add csv">Copy</button>
+      </div>
+      <div class="buttons">
+        <a class="button primary" href="#examples">See examples</a>
+        <a class="button" href="https://github.com/alexiusacademia/csv">Code on GitHub</a>
+      </div>
+      <p class="meta">MIT licence · Tessel 0.10 or later · no dependencies</p>
+    </div>
+    <div class="preview">
+      <div class="panel">
+        <header><b>flows.csv</b></header>
+<pre class="csvtext">Time (h),Flow (m³/s),Note
+0,12.5,
+6,80,"rising, fast"
+12,310,
+42,160,"falling; gate 2 closed"</pre>
+      </div>
+      <div class="arrow">↓ <code>try csv.read("flows.csv")</code></div>
+      <div class="panel">
+        <header><b>Table</b> header + rows</header>
+        <div class="table" style="border:0;border-radius:0">
+          <table>
+            <tr><th>Time (h)</th><th>Flow (m³/s)</th><th>Note</th></tr>
+            <tr><td class="num">0</td><td class="num">12.5</td><td class="empty">""</td></tr>
+            <tr><td class="num">6</td><td class="num">80</td><td>rising, fast</td></tr>
+            <tr><td class="num">12</td><td class="num">310</td><td class="empty">""</td></tr>
+            <tr><td class="num">42</td><td class="num">160</td><td>falling; gate 2 closed</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="examples">
+  <div class="wrap">
+    <h2>Examples</h2>
+    <p class="intro">Every output below was printed by running the code with the library.</p>
+
+    <div class="examples">
+
+      <article class="example">
+        <h3>Columns by name, as numbers</h3>
+        <p>A column is found by its name, ignoring case and spaces at either end. <code>numbers</code> gives <code>NaN</code> where a field is blank or isn't a number.</p>
+<pre class="tsl">import csv
+
+fn main() {
+    match csv.read("flows.csv") {
+        .ok(t) -> {
+            print(t.numbers("flow (m³/s)") ?? [])
+            print(t.value(1, "Note") ?? "")
+        }
+        .failure(e) -> print(e.message)
+    }
+}</pre>
+        <div class="out"><pre>[12.5, 80.0, 310.0, 520.0, 450.0, 330.0, 230.0, 160.0, 110.0]
+rising, fast</pre></div>
+      </article>
+
+      <article class="example">
+        <h3>Quotes inside quotes</h3>
+        <p>A field in quotes may hold the separator, line breaks, and quotes written twice.</p>
+<pre class="tsl">let rows = try csv.parse("name,quote\nAnn,\"She said \"\"hi\"\", then left\"\n")
+print(rows)</pre>
+        <div class="out"><pre>[["name", "quote"], ["Ann", "She said \"hi\", then left"]]</pre></div>
+      </article>
+
+      <article class="example">
+        <h3>Mistakes say where</h3>
+        <p>A quote that's never closed, or text after a closing quote, is a failure with its line and column. <code>lenient: true</code> reads such files as Python does by default.</p>
+<pre class="tsl">match csv.parse("id,name\n7,\"Ann\n8,Ben\n") {
+    .ok(rows) -> print(rows)
+    .failure(e) -> print(e.message)
+}</pre>
+        <div class="out"><pre>line 2, column 3: this quote is never closed</pre></div>
+      </article>
+
+      <article class="example">
+        <h3>Files from Europe</h3>
+        <p><code>separator: ""</code> guesses the separator; <code>decimalComma</code> reads <code>1.080,25</code> as 1080.25.</p>
+<pre class="tsl">let eu = try csv.table("Zeit;Abfluss\n0;12,5\n6;1.080,25\n", separator: "")
+print(eu.numbers("Abfluss", decimalComma: true) ?? [])</pre>
+        <div class="out"><pre>[12.5, 1080.25]</pre></div>
+      </article>
+
+      <article class="example">
+        <h3>Writing</h3>
+        <p>A field gets quotes only when it needs them, with its own quotes doubled, so any program reads it back as it was.</p>
+<pre class="tsl">var t = csv.Table(header: ["station", "note"])
+t.append(["Angat", "spill, gate 3"])
+t.append(["Ipo", "said \"normal\""])
+print(t.text())</pre>
+        <div class="out"><pre>station,note
+Angat,"spill, gate 3"
+Ipo,"said ""normal"""</pre></div>
+      </article>
+
+      <article class="example">
+        <h3>Results to a file</h3>
+        <p><code>fromColumns</code> turns columns of numbers into a table ready to save.</p>
+<pre class="tsl">let out = csv.fromColumns(["t", "q"], [[0, 6, 12], [12.5, 80, 310.25]], decimals: 2)
+print(out.save("out.csv"))</pre>
+        <div class="out"><pre>true</pre></div>
+        <p class="label">out.csv</p>
+        <div class="out"><pre>t,q
+0.00,12.50
+6.00,80.00
+12.00,310.25</pre></div>
+      </article>
+
+    </div>
+
+    <h3 id="chart">With chart</h3>
+    <p class="intro"><code>NaN</code> breaks a line in <a href="https://chart-package.syncster.dev">chart</a>, so a column with gaps plots as it should. Read a file, plot it, save it:</p>
+    <div class="split">
+<pre class="tsl">import csv
+import chart
+
+fn main() {
+    let t = try csv.read("flows.csv")
+    var c = chart.Chart(title: "Inflow", xLabel: t.header[0], yLabel: t.header[1])
+    c.area(t.numbersAt(0), t.numbersAt(1), name: "flows.csv")
+    print(c.savePNG("flows.png"))
+}</pre>
+      <figure class="shot"><img src="assets/flows.png" width="1280" height="800" loading="lazy" alt="An area chart of flow against time, read from flows.csv, peaking at 520 m³/s at 18 hours"></figure>
+    </div>
+  </div>
+</section>
+
+<section id="tested">
+  <div class="wrap">
+    <h2>Checked against Python</h2>
+    <p class="intro">The reader is a port of the steps in Python's <code>csv</code> module, and a script runs thousands of texts through Python and saves the results for the tests to compare against: tricky ones written by hand, random ones of commas, quotes, line breaks and emoji, each with different separators, quotes and settings, mistakes included.</p>
+    <div class="stats">
+      <div class="stat"><b>6,392</b><span>texts read exactly as Python reads them</span></div>
+      <div class="stat"><b>1,500</b><span>sets of rows written as Python writes them, and read back</span></div>
+      <div class="stat"><b>~0.04 s</b><span>to read a 4.3 MB file of 100,000 rows</span></div>
+      <div class="stat"><b>3</b><span>files of Tessel, nothing else to install</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="reference">
+  <div class="wrap">
+    <h2>Reference</h2>
+
+    <h3>Reading</h3>
+    <div class="table"><table>
+      <tr><th>Function</th><th>Gives</th></tr>
+      <tr><td><code>csv.read(path, separator:, header:)</code></td><td>The file as a <code>Table</code>, or a failure saying why: no such file, not UTF-8 text, or a quote that's wrong, with its line and column.</td></tr>
+      <tr><td><code>csv.table(text, separator:, header:)</code></td><td>The same, from text.</td></tr>
+      <tr><td><code>csv.parse(text, separator:)</code></td><td>The rows as lists of fields, <code>[[String]]</code>, with no header. A blank line is an empty row.</td></tr>
+      <tr><td><code>csv.guessSeparator(text)</code></td><td>The separator the text most likely uses: <code>,</code> <code>;</code> tab or <code>|</code>.</td></tr>
+    </table></div>
+    <p class="intro" style="margin-top:14px"><code>separator</code> is <code>","</code> unless you say: any one ASCII character, or <code>""</code> to guess. Lines may end with <code>\n</code>, <code>\r\n</code> or <code>\r</code>, and a byte order mark at the start is left out. Also: <code>header: false</code>, <code>lenient: true</code>, <code>skipSpaces: true</code> and <code>quote: "'"</code>.</p>
+
+    <h3>Tables</h3>
+    <div class="table"><table>
+      <tr><th>Method</th><th>Gives</th></tr>
+      <tr><td><code>column(name)</code></td><td>The column's fields, or <code>nil</code> when there's no such column.</td></tr>
+      <tr><td><code>numbers(name, decimalComma:)</code></td><td>The column as <code>[Float]</code>, <code>NaN</code> where a field is blank or isn't a number.</td></tr>
+      <tr><td><code>columnAt(i)</code>, <code>numbersAt(i)</code></td><td>The same, by the column's index.</td></tr>
+      <tr><td><code>index(name)</code></td><td>The column's index, or <code>nil</code>.</td></tr>
+      <tr><td><code>value(row, name)</code></td><td>One field: <code>""</code> when the row is too short, <code>nil</code> when there's no such row or column.</td></tr>
+      <tr><td><code>record(row)</code></td><td>A row as <code>[String: String]</code>, from column name to field.</td></tr>
+      <tr><td><code>append(row)</code></td><td>Adds a row.</td></tr>
+      <tr><td><code>text(separator:, lineEnding:, quoteAll:)</code></td><td>The table as CSV text.</td></tr>
+      <tr><td><code>save(path, …)</code></td><td>Saves it as a file, and returns whether it worked.</td></tr>
+    </table></div>
+
+    <h3>Writing and numbers</h3>
+    <div class="table"><table>
+      <tr><th>Function</th><th></th></tr>
+      <tr><td><code>csv.format(rows, separator:, lineEnding:, quoteAll:)</code></td><td>Rows as CSV text. Lines end with <code>"\n"</code> unless you say; <code>"\r\n"</code> is what Excel writes.</td></tr>
+      <tr><td><code>csv.write(path, rows, …)</code></td><td>Saves rows as a file, and returns whether it worked.</td></tr>
+      <tr><td><code>csv.fromColumns(header, columns, decimals:)</code></td><td>A <code>Table</code> from columns of numbers. <code>NaN</code> is written as an empty field.</td></tr>
+      <tr><td><code>csv.number(text, decimalComma:)</code></td><td>One field as a <code>Float</code>, or <code>nil</code>. Spaces and thousands separators (<code>1,234.5</code>) are allowed.</td></tr>
+    </table></div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>csv · MIT licence · © 2026 <a href="https://syncster.dev" rel="author">Alexius Academia</a> · <a href="mailto:admin@syncster.dev">admin@syncster.dev</a> · <a href="https://syncster.dev">syncster.dev</a></span>
+    <nav>
+      <a href="https://github.com/alexiusacademia/csv">GitHub</a>
+      <a href="https://tessel-lang.syncster.dev">Tessel</a>
+      <a href="https://chart-package.syncster.dev">chart</a>
+      <a href="https://tessel-lang.syncster.dev/guides/libraries/">Libraries guide</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+// Colours the Tessel code (keywords, strings, numbers, comments) and the CSV
+// file (separators and quotes).
+(function () {
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const keywords = /^(import|fn|var|let|if|else|for|in|while|return|match|try|true|false|nil)$/;
+  const token = /(\/\/[^\n]*)|("(?:\\.|[^"\\])*")|(\b\d+(?:\.\d+)?(?:e-?\d+)?\b)|([A-Za-z_]\w*)/g;
+  for (const pre of document.querySelectorAll("pre.tsl")) {
+    const text = pre.textContent;
+    let out = "", last = 0, m;
+    token.lastIndex = 0;
+    while ((m = token.exec(text))) {
+      out += esc(text.slice(last, m.index));
+      const t = esc(m[0]);
+      if (m[1]) out += '<span class="c">' + t + "</span>";
+      else if (m[2]) out += '<span class="s">' + t + "</span>";
+      else if (m[3]) out += '<span class="n">' + t + "</span>";
+      else if (keywords.test(m[4])) out += '<span class="k">' + t + "</span>";
+      else out += t;
+      last = token.lastIndex;
+    }
+    pre.innerHTML = out + esc(text.slice(last));
+  }
+  for (const pre of document.querySelectorAll("pre.csvtext")) {
+    let out = "", quoted = false;
+    for (const ch of pre.textContent) {
+      if (ch === '"') { quoted = !quoted; out += '<span class="q">"</span>'; }
+      else if (ch === "," && !quoted) out += '<span class="sep">,</span>';
+      else out += esc(ch);
+    }
+    pre.innerHTML = out;
+  }
+  for (const b of document.querySelectorAll("[data-copy]")) {
+    b.addEventListener("click", () => {
+      navigator.clipboard.writeText(b.dataset.copy).then(() => {
+        b.textContent = "Copied";
+        setTimeout(() => { b.textContent = "Copy"; }, 1500);
+      }, () => {});
+    });
+  }
+})();
+</script>
+</body>
+</html>

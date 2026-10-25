@@ -3,3 +3,6 @@
 /csv.exe
 *.app/
 .DS_Store
+
+# Netlify's link to the website project.
+.netlify/
