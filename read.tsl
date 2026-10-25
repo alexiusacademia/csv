@@ -1,0 +1,348 @@
+// csv: reading. The text is read byte by byte with the same steps as
+// Python's csv module (its _csv.c), so a file splits into the same rows and
+// fields: a field in quotes may hold separators, line breaks and doubled
+// quotes, a line ends at \n, \r or \r\n, and a blank line is an empty row.
+// Each field is cut out of the text in one piece, not built a character at
+// a time, so big files read quickly.
+//
+// Author: Alexius Academia
+// Date: 2026-10-25
+
+// Where the reader is.
+let atRecordStart = 0
+let atFieldStart = 1
+let inField = 2
+let inQuotes = 3
+let quoteInQuotes = 4
+let afterLineEnd = 5
+
+// The end of a line: given to the reader after a line's last character, as
+// Python does.
+let endOfLine = -1
+
+let byteLF = 10
+let byteCR = 13
+let byteSpace = 32
+
+// One reading of a text.
+struct Reader {
+    d: Data
+    sep: Int
+    quote: Int
+    lenient: Bool
+    skipSpaces: Bool
+    mode: Int = 0
+    rows: [[String]] = []
+    row: [String] = []
+    // The field so far: `field` holds the pieces already cut out, and
+    // `run` is where the piece being read started (-1 when there is none).
+    field: Data = Data()
+    run: Int = -1
+    // Where the quote that opened the field being read is.
+    opened: Int = -1
+    // Where reading failed, and why (-1 when it hasn't).
+    failedAt: Int = -1
+    why: String = ""
+
+    // Adds the byte at i to the field.
+    fn add(_ i: Int) {
+        if run < 0 {
+            run = i
+        }
+    }
+
+    // Ends the piece being read at i.
+    fn cut(_ i: Int) {
+        if run >= 0 {
+            field.append(d.slice(from: run, to: i))
+            run = -1
+        }
+    }
+
+    // The field, which ended at i, goes on the row.
+    fn save(_ i: Int) {
+        var text = ""
+        if field.isEmpty {
+            if run >= 0 {
+                text = d.slice(from: run, to: i).text ?? ""
+            }
+        } else {
+            cut(i)
+            text = field.text ?? ""
+            field = Data()
+        }
+        run = -1
+        row.append(text)
+    }
+
+    // Reads byte c at index i (or the end of a line, `endOfLine`). Returns
+    // false when the text is wrong there.
+    fn step(_ c: Int, _ i: Int) -> Bool {
+        let newline = c == byteLF || c == byteCR
+        if mode == atRecordStart {
+            if c == endOfLine {
+                return true
+            }
+            if newline {
+                mode = afterLineEnd
+                return true
+            }
+            mode = atFieldStart
+        }
+        if mode == atFieldStart {
+            if newline || c == endOfLine {
+                save(i)
+                mode = if c == endOfLine { atRecordStart } else { afterLineEnd }
+            } else if c == quote {
+                opened = i
+                mode = inQuotes
+            } else if c == byteSpace && skipSpaces {
+                // A space at the start of a field is left out.
+            } else if c == sep {
+                save(i)
+            } else {
+                add(i)
+                mode = inField
+            }
+        } else if mode == inField {
+            if newline || c == endOfLine {
+                save(i)
+                mode = if c == endOfLine { atRecordStart } else { afterLineEnd }
+            } else if c == sep {
+                save(i)
+                mode = atFieldStart
+            } else {
+                add(i)
+            }
+        } else if mode == inQuotes {
+            if c == quote {
+                cut(i)
+                mode = quoteInQuotes
+            } else if c != endOfLine {
+                add(i)
+            }
+        } else if mode == quoteInQuotes {
+            if c == quote {
+                // "" in quotes is one ".
+                add(i)
+                mode = inQuotes
+            } else if c == sep {
+                save(i)
+                mode = atFieldStart
+            } else if newline || c == endOfLine {
+                save(i)
+                mode = if c == endOfLine { atRecordStart } else { afterLineEnd }
+            } else if lenient {
+                add(i)
+                mode = inField
+            } else {
+                failedAt = i
+                why = "after a closing quote comes {shownByte(sep)} or the end of the line, not {shownChar(d, i)}"
+                return false
+            }
+        } else if mode == afterLineEnd {
+            if c == endOfLine {
+                mode = atRecordStart
+            }
+        }
+        true
+    }
+
+    // Reads the whole text from byte `from`. Returns false when it's wrong
+    // somewhere.
+    fn readAll(_ from: Int) -> Bool {
+        let n = d.count
+        var i = from
+        while i < n {
+            let c = d[i]
+            if !step(c, i) {
+                return false
+            }
+            if c == byteLF || (c == byteCR && (i + 1 >= n || d[i + 1] != byteLF)) {
+                let ignored = step(endOfLine, i + 1)
+                if mode == atRecordStart {
+                    rows.append(row)
+                    row = []
+                }
+            }
+            i += 1
+        }
+        // A last line with no line break after it.
+        if n > from && d[n - 1] != byteLF && d[n - 1] != byteCR {
+            if !step(endOfLine, n) {
+                return false
+            }
+            if mode == atRecordStart {
+                rows.append(row)
+                row = []
+            }
+        }
+        if mode == inQuotes {
+            if !lenient {
+                failedAt = opened
+                why = "this quote is never closed"
+                return false
+            }
+            save(n)
+            rows.append(row)
+        }
+        true
+    }
+}
+
+// A separator or quote as the one byte it must be. A mistake in the code
+// (a separator of two characters, or one that can't work) stops the
+// program.
+fn oneByte(_ s: String, _ what: String) -> Int {
+    let bytes = Data(text: s).bytes
+    if bytes.count != 1 {
+        print("csv: the {what} must be one ASCII character, like \",\" or \";\", not \"{s}\"")
+        exit(1)
+    }
+    if bytes[0] == byteLF || bytes[0] == byteCR {
+        print("csv: the {what} can't be a line break")
+        exit(1)
+    }
+    bytes[0]
+}
+
+// The separator byte to read with: `separator`, or the one the text most
+// likely uses when it's "".
+fn separatorByte(_ text: String, _ separator: String, _ quote: Int) -> Int {
+    let sep = oneByte(if separator.isEmpty { guessSeparator(text) } else { separator }, "separator")
+    if sep == quote {
+        print("csv: the separator and the quote can't both be \"{separator}\"")
+        exit(1)
+    }
+    sep
+}
+
+// A byte as it's shown in a message.
+fn shownByte(_ b: Int) -> String {
+    if b == 9 {
+        return "a tab"
+    }
+    "\"" + (Data(bytes: [b]).text ?? "?") + "\""
+}
+
+// The character starting at byte i, as it's shown in a message.
+fn shownChar(_ d: Data, _ i: Int) -> String {
+    var end = i + 1
+    while end < d.count && d[end] >= 0x80 && d[end] < 0xC0 {
+        end += 1
+    }
+    let ch = d.slice(from: i, to: end).text ?? "?"
+    if ch == "\t" {
+        return "a tab"
+    }
+    "\"" + ch + "\""
+}
+
+// The line and column (from 1, in characters) of byte i, as "line 3,
+// column 7".
+fn place(_ d: Data, _ i: Int) -> String {
+    var line = 1
+    var column = 1
+    var k = 0
+    while k < i && k < d.count {
+        let c = d[k]
+        if c == byteLF || (c == byteCR && (k + 1 >= d.count || d[k + 1] != byteLF)) {
+            line += 1
+            column = 1
+        } else if c != byteCR && (c < 0x80 || c >= 0xC0) {
+            column += 1
+        }
+        k += 1
+    }
+    "line {line}, column {column}"
+}
+
+// The number of bytes of the mark some programs put at the start of a UTF-8
+// file (3), or 0 when there isn't one.
+fn byteOrderMark(_ d: Data) -> Int {
+    if d.count >= 3 && d[0] == 0xEF && d[1] == 0xBB && d[2] == 0xBF {
+        return 3
+    }
+    0
+}
+
+// parse(text, separator:, quote:, lenient:, skipSpaces:)
+//   The rows of a CSV text, each a list of its fields, as text. A blank
+//   line is an empty row. `separator` is "," unless you say (";", "\t",
+//   "|", any one ASCII character), or "" to guess it from the text.
+//   Quoted fields may hold separators, line breaks and doubled quotes. A
+//   mark at the start of the text (a byte order mark) is left out.
+//
+//   A quote that is never closed, or a closing quote followed by more of
+//   the field (`"ab"c`), is a failure saying where. With `lenient: true`,
+//   they're read as Python's csv module reads them by default: the field
+//   runs to the end of the text, or goes on after the quote. With
+//   `skipSpaces: true`, spaces after a separator are left out.
+//
+//   match csv.parse("name,age\n\"Smith, J\",42\n") {
+//       .ok(rows) -> print(rows)         // [["name", "age"], ["Smith, J", "42"]]
+//       .failure(e) -> print(e.message)
+//   }
+public fn parse(_ text: String, separator: String = ",", quote: String = "\"", lenient: Bool = false,
+                skipSpaces: Bool = false) -> Result<[[String]]> {
+    let q = oneByte(quote, "quote")
+    let sep = separatorByte(text, separator, q)
+    let d = Data(text: text)
+    var r = Reader(d: d, sep: sep, quote: q, lenient: lenient, skipSpaces: skipSpaces)
+    if !r.readAll(byteOrderMark(d)) {
+        return Result.failure(error: Error("{place(d, r.failedAt)}: {r.why}"))
+    }
+    Result.ok(value: r.rows)
+}
+
+// guessSeparator(text)
+//   The separator a CSV text most likely uses: the one of "," ";" tab and
+//   "|" that appears most outside quotes in its first lines, or "," when
+//   none does.
+//
+//   print(csv.guessSeparator("a;b;c\n1;2;3\n") == ";")   // true
+public fn guessSeparator(_ text: String) -> String {
+    let d = Data(text: text)
+    // The first 10 lines (or 64 KB) are enough.
+    let n = min(d.count, 65536)
+    var commas = 0
+    var semicolons = 0
+    var tabs = 0
+    var bars = 0
+    var lines = 0
+    var quoted = false
+    var i = 0
+    while i < n {
+        let c = d[i]
+        if c == 34 {
+            quoted = !quoted
+        } else if !quoted {
+            if c == 44 {
+                commas += 1
+            } else if c == 59 {
+                semicolons += 1
+            } else if c == 9 {
+                tabs += 1
+            } else if c == 124 {
+                bars += 1
+            } else if c == byteLF {
+                lines += 1
+                if lines >= 10 {
+                    break
+                }
+            }
+        }
+        i += 1
+    }
+    let most = max(max(commas, semicolons), max(tabs, bars))
+    if most == 0 || commas == most {
+        return ","
+    }
+    if semicolons == most {
+        return ";"
+    }
+    if tabs == most {
+        return "\t"
+    }
+    "|"
+}

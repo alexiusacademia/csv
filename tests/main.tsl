@@ -1,0 +1,275 @@
+// csv's tests. First, thousands of cases checked against Python's csv
+// module, saved in cases.json by tools/oracle/oracle.py: how each text
+// reads (rows and fields, or which mistake), and how rows are written. Then
+// the tables, numbers, files, messages and speed, by hand.
+// `tessel run tests` prints the failures and a count, and exits with 1 if
+// any check failed.
+//
+// Author: Alexius Academia
+// Date: 2026-10-25
+
+import ".."
+
+// A reading case from cases.json.
+struct ReadCase {
+    text: String
+    separator: String
+    quote: String
+    lenient: Bool
+    skipSpaces: Bool
+    ok: Bool
+    rows: [[String]]
+    error: String
+}
+
+// A writing case from cases.json.
+struct WriteCase {
+    rows: [[String]]
+    separator: String
+    quote: String
+    lineEnding: String
+    quoteAll: Bool
+    text: String
+}
+
+struct Cases {
+    reads: [ReadCase]
+    writes: [WriteCase]
+}
+
+// Checks that `got` is true: 1 if it isn't.
+fn holds(_ name: String, _ got: Bool) -> Int {
+    if got {
+        print("ok    {name}")
+        return 0
+    }
+    print("FAIL  {name}")
+    1
+}
+
+// Checks that `got` is `expected`.
+fn same(_ name: String, _ got: String, _ expected: String) -> Int {
+    if got == expected {
+        print("ok    {name}: {shown(got)}")
+        return 0
+    }
+    print("FAIL  {name}: \"{shown(got)}\", expected \"{shown(expected)}\"")
+    1
+}
+
+// Checks that reading `text` fails with a message containing `part`.
+fn refuses(_ name: String, _ text: String, _ part: String) -> Int {
+    if let e = csv.parse(text).error() {
+        if e.message.contains(part) {
+            print("ok    {name}: {e.message}")
+            return 0
+        }
+        print("FAIL  {name}: \"{e.message}\" doesn't mention \"{part}\"")
+        return 1
+    }
+    print("FAIL  {name}: it was read")
+    1
+}
+
+// The text with line breaks and tabs shown, for messages.
+fn shown(_ s: String) -> String {
+    s.replace("\r", with: "\\r").replace("\n", with: "\\n").replace("\t", with: "\\t")
+}
+
+// The rows of `text`, or [] when it can't be read.
+fn rowsOf(_ text: String) -> [[String]] {
+    match csv.parse(text) {
+        .ok(rows) -> rows
+        .failure(e) -> []
+    }
+}
+
+// The cases from Python: how many failed.
+fn oracle() -> Result<Int> {
+    var path = "tests/cases.json"
+    if !fileExists(path) {
+        path = "cases.json"
+    }
+    let cases: Cases = try decodeJson(try readText(path))
+    var failed = 0
+    var shownFailures = 0
+    for c in cases.reads {
+        var problem = ""
+        match csv.parse(c.text, separator: c.separator, quote: c.quote, lenient: c.lenient, skipSpaces: c.skipSpaces) {
+            .ok(rows) -> {
+                if !c.ok {
+                    problem = "read, but Python says: {c.error}"
+                } else if rows != c.rows {
+                    problem = "rows {rows}, Python {c.rows}"
+                }
+            }
+            .failure(e) -> {
+                if c.ok {
+                    problem = "refused ({e.message}), Python reads {c.rows}"
+                } else if !e.message.contains(c.error) {
+                    problem = "\"{e.message}\", Python: {c.error}"
+                }
+            }
+        }
+        if problem != "" {
+            failed += 1
+            if shownFailures < 40 {
+                print("FAIL  read \"{shown(c.text)}\" ({shown(c.separator)} {c.quote} lenient {c.lenient} skip {c.skipSpaces}): {problem}")
+                shownFailures += 1
+            }
+        }
+    }
+    print("{cases.reads.count - failed} of {cases.reads.count} readings agree with Python")
+    var writeFailed = 0
+    for c in cases.writes {
+        let text = csv.format(c.rows, separator: c.separator, quote: c.quote, lineEnding: c.lineEnding, quoteAll: c.quoteAll)
+        var problem = ""
+        if text != c.text {
+            problem = "wrote \"{shown(text)}\", Python \"{shown(c.text)}\""
+        } else {
+            // And it reads back as it was.
+            match csv.parse(text, separator: c.separator, quote: c.quote) {
+                .ok(rows) -> {
+                    if rows != c.rows {
+                        problem = "read back as {rows}"
+                    }
+                }
+                .failure(e) -> { problem = "doesn't read back: {e.message}" }
+            }
+        }
+        if problem != "" {
+            writeFailed += 1
+            if shownFailures < 40 {
+                print("FAIL  write {c.rows}: {problem}")
+                shownFailures += 1
+            }
+        }
+    }
+    print("{cases.writes.count - writeFailed} of {cases.writes.count} writings agree with Python and read back")
+    Result.ok(value: failed + writeFailed)
+}
+
+// Tables, by hand.
+fn tables() -> Result<Int> {
+    var failed = 0
+    let t = try csv.table("Time (h), Flow \n0,12.5\n1,\n2,n/a\n3,1e2\n\n4\n")
+    failed += holds("header", t.header == ["Time (h)", " Flow "])
+    failed += holds("blank lines are left out", t.rows.count == 5)
+    failed += holds("index: exact", t.index("Time (h)") == 0)
+    failed += holds("index: case and spaces", t.index("flow") == 1 && t.index("FLOW ") == 1)
+    failed += holds("index: none", t.index("depth") == nil && t.column("depth") == nil)
+    failed += holds("column", (t.column("flow") ?? []) == ["12.5", "", "n/a", "1e2", ""])
+    let q = t.numbers("flow") ?? []
+    failed += holds("numbers: NaN where not a number", q.count == 5 && q[0] == 12.5 && q[1].isNaN && q[2].isNaN && q[3] == 100.0 && q[4].isNaN)
+    failed += holds("numbersAt", t.numbersAt(0) == [0, 1, 2, 3, 4])
+    failed += same("value", t.value(0, "flow") ?? "-", "12.5")
+    failed += holds("value: short row, no row, no column", t.value(4, "flow") == "" && t.value(9, "flow") == nil && t.value(0, "x") == nil)
+    if let r = t.record(0) {
+        failed += holds("record", r["Time (h)"] == "0" && r[" Flow "] == "12.5")
+    } else {
+        failed += holds("record", false)
+    }
+    failed += holds("record: no row", t.record(-1) == nil)
+    let plain = try csv.table("1,2\n3,4\n", header: false)
+    failed += holds("header: false", plain.header.isEmpty && plain.rows == [["1", "2"], ["3", "4"]])
+    var built = csv.Table(header: ["name", "note"])
+    built.append(["Ann", "a, b"])
+    failed += same("Table.text", built.text(), "name,note\nAnn,\"a, b\"\n")
+    failed += same("Table.text with ; and \\r\\n", built.text(separator: ";", lineEnding: "\r\n"), "name;note\r\nAnn;a, b\r\n")
+    let cols = csv.fromColumns(["t", "q"], [[0, 1, 2], [1.5, 0.0 / 0.0]])
+    failed += same("fromColumns", cols.text(), "t,q\n0.0,1.5\n1.0,\n2.0,\n")
+    failed += same("fromColumns with decimals", csv.fromColumns(["x"], [[1.0 / 3.0]], decimals: 3).text(), "x\n0.333\n")
+    Result.ok(value: failed)
+}
+
+// Numbers, by hand.
+fn numbers() -> Int {
+    var failed = 0
+    failed += holds("number: plain", csv.number("42") == 42.0 && csv.number("-1.5e3") == -1500.0)
+    failed += holds("number: spaces", csv.number("  7.25 ") == 7.25)
+    failed += holds("number: thousands", csv.number("1,234,567.5") == 1234567.5 && csv.number("-12,345") == -12345.0)
+    failed += holds("number: bad thousands", csv.number("12,34") == nil && csv.number("1,2345") == nil && csv.number(",123") == nil)
+    failed += holds("number: blank and words", csv.number("") == nil && csv.number("  ") == nil && csv.number("n/a") == nil)
+    failed += holds("number: decimal comma", csv.number("2,5", decimalComma: true) == 2.5 && csv.number("1.234,5", decimalComma: true) == 1234.5)
+    failed += holds("number: decimal comma, space thousands", csv.number("1 234 567,25", decimalComma: true) == 1234567.25)
+    failed += holds("number: decimal comma, bad", csv.number("1.23,4", decimalComma: true) == nil)
+    let t = csv.parse("x;y\n1,5;2,25\n", separator: ";").value() ?? []
+    failed += holds("a ; file with decimal commas", t.count == 2 && t[1] == ["1,5", "2,25"])
+    if let eu = csv.table("x;y\n1,5;2,25\n", separator: ";").value() {
+        failed += holds("numbers with decimalComma", (eu.numbers("y", decimalComma: true) ?? []) == [2.25])
+    }
+    failed
+}
+
+// Reading details, messages and files, by hand.
+fn details() -> Result<Int> {
+    var failed = 0
+    let bom = (Data(bytes: [0xEF, 0xBB, 0xBF]).text ?? "") + "id,name\n1,Ann\n"
+    let t = try csv.table(bom)
+    failed += holds("a byte order mark is left out", t.header == ["id", "name"])
+    failed += holds("guess: ,", csv.guessSeparator("a,b\n1,2\n") == ",")
+    failed += holds("guess: ;", csv.guessSeparator("a;b;c\n1,5;2;3\n") == ";")
+    failed += holds("guess: tab", csv.guessSeparator("a\tb\n1\t2\n") == "\t")
+    failed += holds("guess: |", csv.guessSeparator("a|b\n1|2\n") == "|")
+    failed += holds("guess: not inside quotes", csv.guessSeparator("\"a;b;c\",d\n") == ",")
+    failed += holds("guess: none is ,", csv.guessSeparator("abc\n") == ",")
+    failed += holds("separator \"\" guesses", rowsOf("x") == [["x"]] && (csv.parse("a;b\n1;2\n", separator: "").value() ?? []) == [["a", "b"], ["1", "2"]])
+    failed += holds("Unicode fields", rowsOf("é,\"😀,中\"\n") == [["é", "😀,中"]])
+    failed += refuses("never closed", "a,b\nc,\"d\ne\n", "line 2, column 3: this quote is never closed")
+    failed += refuses("after a closing quote", "a\n\"bc\"d,e\n", "line 2, column 5: after a closing quote comes \",\" or the end of the line, not \"d\"")
+    failed += refuses("columns count characters", "é😀,\"x\"😀", "line 1, column 7")
+    if let e = csv.parse("\"a\"\tb", separator: ";").error() {
+        failed += holds("a tab is named", e.message.contains("not a tab"))
+    }
+    failed += holds("lenient reads to the end", (csv.parse("a,\"b\nc", lenient: true).value() ?? []) == [["a", "b\nc"]])
+
+    // Files.
+    let folder = joinPath(tempFolder(), "csv-tests")
+    let ignored = createFolder(path: folder)
+    let path = joinPath(folder, "flows.csv")
+    let rows = [["t", "q", "note"], ["0", "1.5", "rising, fast"], ["1", "2.5", "said \"peak\""]]
+    failed += holds("write", csv.write(path, rows, lineEnding: "\r\n"))
+    let back = try csv.read(path)
+    failed += holds("read what was written", back.header == rows[0] && back.rows == [rows[1], rows[2]])
+    failed += holds("Table.save and read", back.save(path) && (csv.read(path).value()?.rows ?? []) == back.rows)
+    if let e = csv.read(joinPath(folder, "nope.csv")).error() {
+        failed += holds("no such file: {e.message}", e.message.contains("there's no file"))
+    }
+    let ignored2 = writeFile(path: path, text: "a,\"b\n")
+    if let e = csv.read(path).error() {
+        failed += holds("a bad file names itself: {e.message}", e.message.hasPrefix(path) && e.message.contains("line 1, column 3"))
+    }
+    Result.ok(value: failed)
+}
+
+// Speed: a file of 100 000 rows.
+fn speed() -> Int {
+    var lines: [String] = ["id,time,flow,note"]
+    for k in 0..100000 {
+        lines.append("{k},2026-10-25 08:{k % 60},{k % 997}.{k % 10},\"gauge {k % 7}, ok\"")
+    }
+    let text = lines.joined(separator: "\n")
+    let mb = Float(Data(text: text).count) / 1e6
+    let started = now()
+    let rows = rowsOf(text)
+    let took = now() - started
+    var failed = holds("100 000 rows ({mb.formatted(decimals: 1)} MB) in {took.formatted(decimals: 2)} s, {(mb / took).formatted(decimals: 1)} MB/s", rows.count == 100001 && took < 10.0)
+    let t0 = now()
+    let out = csv.format(rows)
+    let took2 = now() - t0
+    failed += holds("written again in {took2.formatted(decimals: 2)} s", out == text + "\n")
+    failed
+}
+
+fn main() {
+    var failed = try oracle()
+    failed += try tables()
+    failed += numbers()
+    failed += try details()
+    failed += speed()
+    if failed > 0 {
+        print("\n{failed} failed")
+        exit(1)
+    }
+    print("\nall passed")
+}

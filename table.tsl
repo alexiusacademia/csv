@@ -1,0 +1,245 @@
+// csv: tables. A Table is a CSV file's header and rows, with columns found
+// by name and read as text or as numbers.
+//
+// Author: Alexius Academia
+// Date: 2026-10-25
+
+// A CSV file's contents: the names in its first line, and the rows after
+// it. Rows may be shorter or longer than the header; a field that isn't
+// there reads as "".
+public struct Table {
+    header: [String] = []
+    rows: [[String]] = []
+
+    // The index of the column called `name`: the first with exactly that
+    // name, else the first whose name matches ignoring case and spaces at
+    // either end. nil when there's none.
+    fn index(_ name: String) -> Int? {
+        for (k, h) in header.enumerated() {
+            if h == name {
+                return k
+            }
+        }
+        let wanted = name.trim().lowercase()
+        for (k, h) in header.enumerated() {
+            if h.trim().lowercase() == wanted {
+                return k
+            }
+        }
+        nil
+    }
+
+    // The column at index k, one field per row ("" where a row is short).
+    fn columnAt(_ k: Int) -> [String] {
+        var out: [String] = []
+        for r in rows {
+            out.append(if k >= 0 && k < r.count { r[k] } else { "" })
+        }
+        out
+    }
+
+    // The column called `name`, or nil when there's no such column.
+    fn column(_ name: String) -> [String]? {
+        if let k = index(name) {
+            return columnAt(k)
+        }
+        nil
+    }
+
+    // The column called `name` as numbers (see `csv.number`), NaN where a
+    // field is blank or isn't a number. nil when there's no such column.
+    fn numbers(_ name: String, decimalComma: Bool = false) -> [Float]? {
+        if let k = index(name) {
+            return numbersAt(k, decimalComma: decimalComma)
+        }
+        nil
+    }
+
+    // The column at index k as numbers, NaN where a field isn't one.
+    fn numbersAt(_ k: Int, decimalComma: Bool = false) -> [Float] {
+        var out: [Float] = []
+        for field in columnAt(k) {
+            out.append(number(field, decimalComma: decimalComma) ?? nan)
+        }
+        out
+    }
+
+    // Row r's field in the column called `name`: nil when there's no such
+    // row or column, "" when the row is too short to have it.
+    fn value(_ r: Int, _ name: String) -> String? {
+        if r < 0 || r >= rows.count {
+            return nil
+        }
+        if let k = index(name) {
+            return if k < rows[r].count { rows[r][k] } else { "" }
+        }
+        nil
+    }
+
+    // Row r as a dictionary from column name to field. nil when there's no
+    // such row.
+    fn record(_ r: Int) -> [String: String]? {
+        if r < 0 || r >= rows.count {
+            return nil
+        }
+        var out: [String: String] = [:]
+        for (k, h) in header.enumerated() {
+            if out[h] == nil {
+                out[h] = if k < rows[r].count { rows[r][k] } else { "" }
+            }
+        }
+        out
+    }
+
+    // Adds a row at the end.
+    fn append(_ row: [String]) {
+        rows.append(row)
+    }
+
+    // The table as CSV text: the header (unless it's empty), then the rows.
+    // See `csv.format` for the settings.
+    fn text(separator: String = ",", lineEnding: String = "\n", quoteAll: Bool = false) -> String {
+        var all: [[String]] = []
+        if !header.isEmpty {
+            all.append(header)
+        }
+        all += rows
+        format(all, separator: separator, lineEnding: lineEnding, quoteAll: quoteAll)
+    }
+
+    // Saves the table as a CSV file. Returns whether it worked.
+    fn save(_ path: String, separator: String = ",", lineEnding: String = "\n", quoteAll: Bool = false) -> Bool {
+        writeFile(path: path, text: text(separator: separator, lineEnding: lineEnding, quoteAll: quoteAll))
+    }
+}
+
+// table(text, separator:, header:, quote:, lenient:, skipSpaces:)
+//   A CSV text as a Table: its first row is the header (unless `header:
+//   false`) and the rest are the rows. Blank lines are left out. The other
+//   settings are `csv.parse`'s.
+//
+//   let t = try csv.table("t,q\n0,1.5\n1,2.5\n")
+//   print(t.numbers("q") ?? [])      // [1.5, 2.5]
+public fn table(_ text: String, separator: String = ",", header: Bool = true, quote: String = "\"",
+                lenient: Bool = false, skipSpaces: Bool = false) -> Result<Table> {
+    let all = try parse(text, separator: separator, quote: quote, lenient: lenient, skipSpaces: skipSpaces)
+    var t = Table()
+    for r in all {
+        if r.isEmpty {
+            continue
+        }
+        if header && t.header.isEmpty && t.rows.isEmpty {
+            t.header = r
+        } else {
+            t.rows.append(r)
+        }
+    }
+    Result.ok(value: t)
+}
+
+// read(path, separator:, header:, quote:, lenient:, skipSpaces:)
+//   A CSV file as a Table, as `csv.table` reads its text. A failure when
+//   the file can't be read or isn't UTF-8 text, or its quotes are wrong.
+//   `separator: ""` guesses the separator from the file.
+public fn read(_ path: String, separator: String = ",", header: Bool = true, quote: String = "\"",
+               lenient: Bool = false, skipSpaces: Bool = false) -> Result<Table> {
+    if let text = readFile(path) {
+        return match table(text, separator: separator, header: header, quote: quote, lenient: lenient, skipSpaces: skipSpaces) {
+            .ok(t) -> Result.ok(value: t)
+            .failure(e) -> Result.failure(error: Error("{path}, {e.message}"))
+        }
+    }
+    if !fileExists(path) {
+        return Result.failure(error: Error("there's no file {path}"))
+    }
+    Result.failure(error: Error("{path} can't be read as UTF-8 text"))
+}
+
+// fromColumns(header, columns, decimals:)
+//   A Table made from columns of numbers, one per header name, ready to
+//   save. NaN is written as an empty field, a short column leaves its
+//   last fields empty, and `decimals` (when 0 or more) fixes the decimals
+//   written.
+//
+//   let t = csv.fromColumns(["t", "q"], [[0, 1, 2], [1.5, 2.25, 3]])
+//   print(t.text())                  // t,q\n0.0,1.5\n1.0,2.25\n2.0,3.0\n
+public fn fromColumns(_ header: [String], _ columns: [[Float]], decimals: Int = -1) -> Table {
+    var t = Table(header: header)
+    var count = 0
+    for c in columns {
+        count = max(count, c.count)
+    }
+    for r in 0..count {
+        var row: [String] = []
+        for c in columns {
+            if r < c.count && !c[r].isNaN {
+                row.append(if decimals >= 0 { c[r].formatted(decimals: decimals) } else { "{c[r]}" })
+            } else {
+                row.append("")
+            }
+        }
+        t.rows.append(row)
+    }
+    t
+}
+
+// number(text, decimalComma:)
+//   A field as a number, or nil when it isn't one: spaces at either end are
+//   ignored, and so are thousands separators in groups of three
+//   ("1,234.5"). With `decimalComma: true` the comma is the decimal point
+//   and "." or a space separates thousands ("1.234,5"), as in files from
+//   much of Europe.
+//
+//   print(csv.number(" 1,234.5 ") ?? 0.0)                     // 1234.5
+//   print(csv.number("2,5", decimalComma: true) ?? 0.0)      // 2.5
+public fn number(_ text: String, decimalComma: Bool = false) -> Float? {
+    var s = text.trim()
+    if s.isEmpty {
+        return nil
+    }
+    let point = if decimalComma { "," } else { "." }
+    let group = if decimalComma { "." } else { "," }
+    if decimalComma && s.contains(" ") {
+        s = s.replace(" ", with: group)
+    }
+    if s.contains(group) {
+        if !grouped(s, group, point) {
+            return nil
+        }
+        s = s.replace(group, with: "")
+    }
+    if decimalComma {
+        s = s.replace(",", with: ".")
+    }
+    Float(s)
+}
+
+// Whether the whole-number part of s has its thousands separated by `group`
+// properly: 1 to 3 digits, then groups of exactly 3.
+fn grouped(_ s: String, _ group: String, _ point: String) -> Bool {
+    var whole = s
+    if let p = s.find(point) {
+        whole = s.substring(from: 0, to: p)
+    }
+    if whole.hasPrefix("-") || whole.hasPrefix("+") {
+        whole = whole.substring(from: 1, to: whole.count)
+    }
+    let parts = whole.split(group)
+    if parts.count < 2 || parts[0].isEmpty || parts[0].count > 3 {
+        return false
+    }
+    for (k, part) in parts.enumerated() {
+        if k > 0 && part.count != 3 {
+            return false
+        }
+        for ch in part.characters {
+            if ch < "0" || ch > "9" {
+                return false
+            }
+        }
+    }
+    true
+}
+
+// Not a number: what `numbers` gives for a field that isn't one.
+let nan = 0.0 / 0.0

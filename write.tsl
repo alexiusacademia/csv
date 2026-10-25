@@ -1,0 +1,59 @@
+// csv: writing. Rows become CSV text as Python's csv module writes them
+// (its QUOTE_MINIMAL), so any program reading CSV reads them back as they
+// were: a field is put in quotes only when it has to be, with its quotes
+// doubled.
+//
+// Author: Alexius Academia
+// Date: 2026-10-25
+
+// A field as the file holds it.
+fn quoted(_ field: String, _ sep: String, _ quote: String, _ quoteAll: Bool, _ alone: Bool) -> String {
+    // A row of one empty field is written "" so it isn't read as a blank
+    // line.
+    let needs = quoteAll || (alone && field.isEmpty) || field.contains(sep) || field.contains(quote) ||
+        field.contains("\n") || field.contains("\r")
+    if !needs {
+        return field
+    }
+    quote + field.replace(quote, with: quote + quote) + quote
+}
+
+// format(rows, separator:, quote:, lineEnding:, quoteAll:)
+//   Rows of fields as CSV text, each row ending with `lineEnding` ("\n"
+//   unless you say; "\r\n" is what Excel and RFC 4180 write). A field is
+//   quoted when it holds the separator, a quote or a line break, or with
+//   `quoteAll: true`, always. Rows may have different numbers of fields.
+//
+//   print(csv.format([["name", "note"], ["Ann", "said \"hi\", left"]]))
+//   // name,note
+//   // Ann,"said ""hi"", left"
+public fn format(_ rows: [[String]], separator: String = ",", quote: String = "\"", lineEnding: String = "\n",
+                 quoteAll: Bool = false) -> String {
+    let q = oneByte(quote, "quote")
+    let sep = oneByte(separator, "separator")
+    if sep == q {
+        print("csv: the separator and the quote can't both be \"{separator}\"")
+        exit(1)
+    }
+    // The pieces are gathered in a list and joined once: adding to a long
+    // String over and over is slow.
+    var out: [String] = []
+    for row in rows {
+        for (k, field) in row.enumerated() {
+            if k > 0 {
+                out.append(separator)
+            }
+            out.append(quoted(field, separator, quote, quoteAll, row.count == 1))
+        }
+        out.append(lineEnding)
+    }
+    out.joined()
+}
+
+// write(path, rows, separator:, quote:, lineEnding:, quoteAll:)
+//   Saves rows as a CSV file, written as `csv.format` writes them. Returns
+//   whether it worked.
+public fn write(_ path: String, _ rows: [[String]], separator: String = ",", quote: String = "\"",
+                lineEnding: String = "\n", quoteAll: Bool = false) -> Bool {
+    writeFile(path: path, text: format(rows, separator: separator, quote: quote, lineEnding: lineEnding, quoteAll: quoteAll))
+}
