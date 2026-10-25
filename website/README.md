@@ -5,7 +5,8 @@ The page for the csv library, live at https://csv-package.syncster.dev.
 Author: Alexius Academia · Started 2026-10-25
 
 A static page: no build step, no dependencies. Netlify (project
-`csv-package`, team syncster.dev) deploys this folder by itself whenever
+`csv-package`, id `711f09a2-58d1-4da8-bede-9d30947e3304`, team syncster.dev)
+deploys this folder by itself whenever
 `main` is pushed to GitHub.
 
 ```
